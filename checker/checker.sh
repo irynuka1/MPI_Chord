@@ -94,6 +94,7 @@ run_test() {
         if [ $RESULT -eq 2 ]; then
             # succesor greșit
             LOCAL_CORRECT=0
+            LOCAL_EFF=0
         elif [ $RESULT -eq 3 ]; then
             # prea multe hopuri
             LOCAL_EFF=0
