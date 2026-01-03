@@ -160,7 +160,12 @@ void build_finger_table() {
      *   - inelul este static, deci finger table-ul este static
      *   - este parte OBLIGATORIE a temei
      ******************************************************/
-
+    
+    for (int i = 0; i < M; i++) {
+        int start = (self.id + (1 << i)) % RING_SIZE;
+        self.finger[i].start = start;
+        self.finger[i].node = find_successor_simple(start);
+    }
 }
 
 /************************************************************
@@ -184,8 +189,16 @@ int closest_preceding_finger(int key) {
     /******************************************************
      * TODO 2 - de implementat de voi
      ******************************************************/
+    
+    // Parcurg in ordine inversa pentru a gasi cel mai mare finger
+    for (int i = M - 1; i >= 0; i--) {
+        int finger = self.finger[i].node;
+        
+        if (in_interval(finger, self.id, key))
+            return finger;
+    }
 
-    return self.successor;   // fallback
+    return self.successor;
 }
 
 /************************************************************
@@ -207,6 +220,31 @@ void handle_lookup_request(LookupMsg *msg) {
     /******************************************************
      * TODO 3 – de implementat de voi
      ******************************************************/
+    
+    // Adaug self.id in path
+    msg->path[msg->path_len++] = self.id;
+    
+    // Daca self.id este cheia cautata trimit raspuns inapoi
+    if (msg->key == self.id) {
+        int rank = rank_from_id(msg->initiator_id);
+        MPI_Send(msg, sizeof(LookupMsg), MPI_BYTE, rank, TAG_LOOKUP_REP, MPI_COMM_WORLD);
+        return;
+    }
+    
+    // Daca cheia se afla intre self.id si succesor atunci succesorul este responsabil
+    if (in_interval(msg->key, self.id, self.successor)) {
+        msg->path[msg->path_len++] = self.successor;
+        
+        int rank = rank_from_id(msg->initiator_id);
+        MPI_Send(msg, sizeof(LookupMsg), MPI_BYTE, rank, TAG_LOOKUP_REP, MPI_COMM_WORLD);
+    } else {
+        // Altfel, trimit cererea mai departe
+        int next_id = closest_preceding_finger(msg->key);
+        int next_rank = rank_from_id(next_id);
+        
+        msg->current_id = next_id;
+        MPI_Send(msg, sizeof(LookupMsg), MPI_BYTE, next_rank, TAG_LOOKUP_REQ, MPI_COMM_WORLD);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -255,6 +293,16 @@ int main(int argc, char **argv) {
      *       - construiți LookupMsg
      *       - trimiteți un mesaj de tip TAG_LOOKUP_REQ către propriul rank
      ************************************************************/
+    
+    for (int i = 0; i < nr_lookups; i++) {
+        LookupMsg msg;
+        msg.initiator_id = self.id;
+        msg.current_id = self.id;
+        msg.key = lookups[i];
+        msg.path_len = 0;
+        
+        MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, world_rank, TAG_LOOKUP_REQ, MPI_COMM_WORLD);
+    }
 
     free(lookups);
 
@@ -268,6 +316,56 @@ int main(int argc, char **argv) {
      *       - trimiteți TAG_DONE tuturor când ați terminat
      *       - opriți loop-ul doar când primiți DONE de la toate nodurile
      ************************************************************/
+    
+    int l_done = 0;     // Lookup-uri finalizate
+    int count = 0;      // Numarul de noduri care au trimis DONE
+    int sent_done = 0;  // Flag pentru trimiterea DONE
+    
+    // Daca nu exista lookup-uri trimit DONE
+    if (nr_lookups == 0) {
+        LookupMsg msg;
+        for (int i = 0; i < world_size; i++)
+            MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
+
+        sent_done = 1;
+    }
+    
+    while (count < world_size) {
+        LookupMsg msg;
+        MPI_Status status;
+        
+        // Primesc mesajul
+        MPI_Recv(&msg, sizeof(LookupMsg), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        
+        if (status.MPI_TAG == TAG_LOOKUP_REQ) {
+            // Procesez cererea de lookup
+            handle_lookup_request(&msg);
+
+        } else if (status.MPI_TAG == TAG_LOOKUP_REP) {
+            // Procesez raspunsul de lookup
+            printf("Lookup %d: ", msg.key);
+            for (int i = 0; i < msg.path_len; i++) {
+                printf("%d", msg.path[i]);
+                if (i < msg.path_len - 1)
+                    printf(" -> ");
+            }
+            printf("\n");
+            
+            l_done++;
+            
+            // Daca am terminat toate lookup-urile trimit DONE
+            if (l_done == nr_lookups && !sent_done) {
+                for (int i = 0; i < world_size; i++)
+                    MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
+
+                sent_done = 1;
+            }
+            
+        } else if (status.MPI_TAG == TAG_DONE) {
+            // Am primit DONE de la un nod
+            count++;
+        }
+    }
 
     MPI_Finalize();
     return 0;
