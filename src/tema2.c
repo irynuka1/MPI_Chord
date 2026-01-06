@@ -318,16 +318,19 @@ int main(int argc, char **argv) {
      ************************************************************/
     
     int l_done = 0;     // Lookup-uri finalizate
-    int count = 0;      // Numarul de noduri care au trimis DONE
+    int count = 0;      // Numarul de noduri care au terminat
     int sent_done = 0;  // Flag pentru trimiterea DONE
     
     // Daca nu exista lookup-uri trimit DONE
     if (nr_lookups == 0) {
         LookupMsg msg;
+
         for (int i = 0; i < world_size; i++)
-            MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
+            if (i != world_rank)
+                MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
 
         sent_done = 1;
+        count++;
     }
     
     while (count < world_size) {
@@ -356,9 +359,11 @@ int main(int argc, char **argv) {
             // Daca am terminat toate lookup-urile trimit DONE
             if (l_done == nr_lookups && !sent_done) {
                 for (int i = 0; i < world_size; i++)
-                    MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
+                    if (i != world_rank)
+                        MPI_Send(&msg, sizeof(LookupMsg), MPI_BYTE, i, TAG_DONE, MPI_COMM_WORLD);
 
                 sent_done = 1;
+                count++;
             }
             
         } else if (status.MPI_TAG == TAG_DONE) {
