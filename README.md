@@ -1,3 +1,3 @@
 # Tema 2 APD 2025
 
-CHORD in MPI
+CHECK OUT ABOUT.pdf file for description
